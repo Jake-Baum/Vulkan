@@ -8,6 +8,18 @@
 #include <optional>
 #include <set>
 
+#include "Structs.h"
+#include "Constants.h"
+#include "PhysicalDevice.h"
+#include "RenderPass.h"
+#include "GraphicsPipeline.h"
+#include "FramebufferCreator.h"
+#include "CommandPool.h"
+#include "CommandBuffer.h"
+#include "FrameDrawer.h"
+
+#pragma warning(disable: 4100)
+
 class Application
 {
 public:
@@ -31,6 +43,8 @@ private:
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME
 	};
 
+#define NDEBUG
+
 #ifdef NDEBUG
 	const bool enableValidationLayers = false;
 #else
@@ -52,6 +66,17 @@ private:
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;
 	std::vector<VkImageView> swapChainImageViews;
+
+	std::unique_ptr<GraphicsPipeline> graphicsPipeline;
+	std::unique_ptr<RenderPass> renderPass;
+	std::unique_ptr<FramebufferCreator> framebuffer;
+	std::unique_ptr<CommandPool> commandPool;
+	std::unique_ptr<CommandBuffer> commandBuffer;
+
+	std::vector<VkSemaphore> imageAvailableSemaphores;
+	std::vector<VkSemaphore> renderFinishedSemaphores;
+	std::vector<VkFence> inFlightFences;
+	std::vector<VkFence> imagesInFlight;
 
 	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
 	{
@@ -100,18 +125,57 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+
+		renderPass = std::make_unique<RenderPass>(device, swapChainImageFormat);
+		renderPass->createRenderPass();
+
+		graphicsPipeline = std::make_unique<GraphicsPipeline>(device, swapChainExtent, *renderPass);
+		graphicsPipeline->createGraphicsPipeline();
+
+		framebuffer = std::make_unique<FramebufferCreator>(device, swapChainImageViews, *renderPass, swapChainExtent);
+		framebuffer->createFramebuffers();
+
+		commandPool = std::make_unique<CommandPool>(device, physicalDevice, surface);
+		commandPool->createCommandPool();
+
+		commandBuffer = std::make_unique<CommandBuffer>(device, *framebuffer, *commandPool, *renderPass, swapChainExtent, *graphicsPipeline);
+		commandBuffer->createCommandBuffers();
+
+		createSyncObjects();
 	}
 
 	void mainLoop()
 	{
+		FrameDrawer frameDrawer(device, swapChain, imageAvailableSemaphores, renderFinishedSemaphores, inFlightFences, imagesInFlight, *commandBuffer, graphicsQueue, presentQueue);
 		while (!glfwWindowShouldClose(window))
 		{
 			glfwPollEvents();
+			frameDrawer.drawFrame();
 		}
+
+		vkDeviceWaitIdle(device);
 	}
 
 	void cleanUp()
 	{
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+			vkDestroyFence(device, inFlightFences[i], nullptr);
+		}
+
+		vkDestroyCommandPool(device, commandPool->commandPool, nullptr);
+
+		for (auto fb : framebuffer->swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, fb, nullptr);
+		}
+
+		vkDestroyPipeline(device, graphicsPipeline->graphicsPipeline, nullptr);
+		vkDestroyPipelineLayout(device, graphicsPipeline->pipelineLayout, nullptr);
+		vkDestroyRenderPass(device, renderPass->renderPass, nullptr);
+
 		for (auto imageView : swapChainImageViews)
 		{
 			vkDestroyImageView(device, imageView, nullptr);
@@ -127,6 +191,33 @@ private:
 		vkDestroyInstance(instance, nullptr);
 		glfwDestroyWindow(window);
 		glfwTerminate();
+	}
+
+	void createSyncObjects()
+	{
+		imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+		imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
+
+		VkSemaphoreCreateInfo semaphoreInfo{};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+					vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+					vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
+			{
+
+				throw std::runtime_error("failed to create semaphores!");
+			}
+		}
+
 	}
 
 	void createInstance()
@@ -201,7 +292,7 @@ private:
 		createInfo.imageArrayLayers = 1;
 		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		QueueFamilyIndices indices = PhysicalDevice::findQueueFamilies(physicalDevice, surface);
 		uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
 		if (indices.graphicsFamily != indices.presentFamily)
@@ -352,11 +443,11 @@ private:
 		std::vector<VkPhysicalDevice> devices(deviceCount);
 		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-		for (const auto& device : devices)
+		for (const auto& d : devices)
 		{
-			if (isDeviceSuitable(device))
+			if (isDeviceSuitable(d))
 			{
-				physicalDevice = device;
+				physicalDevice = d;
 				break;
 			}
 		}
@@ -367,46 +458,35 @@ private:
 		}
 	}
 
-	struct QueueFamilyIndices
-	{
-		std::optional<uint32_t> graphicsFamily;
-		std::optional<uint32_t> presentFamily;
-
-		bool isComplete()
-		{
-			return graphicsFamily.has_value() && presentFamily.has_value();
-		}
-	};
-
-	bool isDeviceSuitable(VkPhysicalDevice device)
+	bool isDeviceSuitable(VkPhysicalDevice d)
 	{
 		VkPhysicalDeviceProperties deviceProperties;
 		VkPhysicalDeviceFeatures deviceFeatures;
 
-		vkGetPhysicalDeviceProperties(device, &deviceProperties);
-		vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+		vkGetPhysicalDeviceProperties(d, &deviceProperties);
+		vkGetPhysicalDeviceFeatures(d, &deviceFeatures);
 
-		QueueFamilyIndices indices = findQueueFamilies(device);
+		QueueFamilyIndices indices = PhysicalDevice::findQueueFamilies(d, surface);
 
-		bool extensionsSupported = checkDeviceExtensionSupport(device);
+		bool extensionsSupported = checkDeviceExtensionSupport(d);
 
 		bool swapChainAdequate = false;
 		if (extensionsSupported)
 		{
-			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(d);
 			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
 		}
 
 		return indices.isComplete() && deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader && extensionsSupported && swapChainAdequate;
 	}
 
-	bool checkDeviceExtensionSupport(VkPhysicalDevice device)
+	bool checkDeviceExtensionSupport(VkPhysicalDevice d)
 	{
 		uint32_t extensionCount;
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+		vkEnumerateDeviceExtensionProperties(d, nullptr, &extensionCount, nullptr);
 
 		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+		vkEnumerateDeviceExtensionProperties(d, nullptr, &extensionCount, availableExtensions.data());
 
 		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
 
@@ -418,42 +498,6 @@ private:
 		return requiredExtensions.empty();
 	}
 
-	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
-	{
-		QueueFamilyIndices indices;
-
-		uint32_t queueFamilyCount = 0;
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
-		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-		int i = 0;
-		for (const auto& queueFamily : queueFamilies)
-		{
-			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-			{
-				indices.graphicsFamily = i;
-			}
-
-			VkBool32 presentSupport = false;
-			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
-			if (presentSupport)
-			{
-				indices.presentFamily = i;
-			}
-
-			if (indices.isComplete())
-			{
-				break;
-			}
-
-			i++;
-		}
-
-		return indices;
-	}
-
 	void createLogicalDevice()
 	{
 		if (physicalDevice == VK_NULL_HANDLE)
@@ -461,7 +505,7 @@ private:
 			throw std::runtime_error("Phyical device not selected yet.  Call selectPhysicalDevice() before this function");
 		}
 
-		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		QueueFamilyIndices indices = PhysicalDevice::findQueueFamilies(physicalDevice, surface);
 
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 		std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
@@ -504,29 +548,29 @@ private:
 		std::vector<VkPresentModeKHR> presentModes;
 	};
 
-	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
+	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice d)
 	{
 		SwapChainSupportDetails details;
 
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(d, surface, &details.capabilities);
 
 		uint32_t formatCount;
-		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(d, surface, &formatCount, nullptr);
 
 		if (formatCount != 0)
 		{
 			details.formats.resize(formatCount);
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+			vkGetPhysicalDeviceSurfaceFormatsKHR(d, surface, &formatCount, details.formats.data());
 		}
 
 
 		uint32_t presentModeCount;
-		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(d, surface, &presentModeCount, nullptr);
 
 		if (presentModeCount != 0)
 		{
 			details.presentModes.resize(presentModeCount);
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+			vkGetPhysicalDeviceSurfacePresentModesKHR(d, surface, &presentModeCount, details.presentModes.data());
 		}
 
 		return details;

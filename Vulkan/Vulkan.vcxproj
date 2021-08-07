@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -120,12 +120,13 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>C:\VulkanSDK\1.2.162.1\Include;C:\Development\C++\Libraries\glm-master;C:\Development\C++\Libraries\glfw-3.3.2.bin.WIN64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -136,7 +137,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
@@ -144,6 +145,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>C:\VulkanSDK\1.2.162.1\Include;C:\Development\C++\Libraries\glm-master;C:\Development\C++\Libraries\glfw-3.3.2.bin.WIN64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -155,7 +157,40 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CommandBuffer.cpp" />
+    <ClCompile Include="CommandPool.cpp" />
+    <ClCompile Include="FileReader.cpp" />
+    <ClCompile Include="FramebufferCreator.cpp" />
+    <ClCompile Include="FrameDrawer.cpp" />
+    <ClCompile Include="GraphicsPipeline.cpp" />
     <ClCompile Include="Main.cpp" />
+    <ClCompile Include="PhysicalDevice.cpp" />
+    <ClCompile Include="RenderPass.cpp" />
+    <ClCompile Include="SemaphoreCreator.cpp" />
+    <None Include="shader.vert">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="CommandBuffer.h" />
+    <ClInclude Include="CommandPool.h" />
+    <ClInclude Include="Constants.h" />
+    <ClInclude Include="FileReader.h" />
+    <ClInclude Include="FramebufferCreator.h" />
+    <ClInclude Include="FrameDrawer.h" />
+    <ClInclude Include="GraphicsPipeline.h" />
+    <ClInclude Include="PhysicalDevice.h" />
+    <ClInclude Include="RenderPass.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="SemaphoreCreator.h" />
+    <ClInclude Include="Structs.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Vulkan.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="compile.bat" />
+    <None Include="shader.frag" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
